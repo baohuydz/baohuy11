@@ -6,7 +6,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from keep_alive import keep_alive  # 👈 import file keep riêng
 
 # ====== CONFIG ======
-BOT_TOKEN = os.getenv("BOT_TOKEN") or "YOUR_BOT_TOKEN"
+BOT_TOKEN = os.getenv("8080338995:AAGxFfuzRzsjl_qsnCSK-2JZvBwy_B3NjRY") or "YOUR_BOT_TOKEN"
 
 FB_INFO_API = "https://profile.taphoabill.top/api/fb/getInfo.php"
 TIKTOK_LIVE_API = "https://profile.taphoabill.top/api/tiktok/checklive/"
