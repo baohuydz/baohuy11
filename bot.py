@@ -3,10 +3,10 @@ import requests
 import logging
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
-from keep_alive import keep_alive  # 👈 import file keep riêng
+from keep_alive import keep_alive
 
 # ====== CONFIG ======
-BOT_TOKEN = os.getenv("8080338995:AAGxFfuzRzsjl_qsnCSK-2JZvBwy_B3NjRY") or "YOUR_BOT_TOKEN"
+BOT_TOKEN = os.getenv("8080338995:AAGxFfuzRzsjl_qsnCSK-2JZvBwy_B3NjRY")  # set trên Render
 
 FB_INFO_API = "https://profile.taphoabill.top/api/fb/getInfo.php"
 TIKTOK_LIVE_API = "https://profile.taphoabill.top/api/tiktok/checklive/"
@@ -21,14 +21,22 @@ logging.basicConfig(
 
 # ====== COMMANDS ======
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🤖 Bot đã sẵn sàng!\n\n"
-        "Lệnh:\n"
-        "• /checkfb <idfb>\n"
-        "• /getidfb <link_or_username>\n"
-        "• /checkfblive <idfb>\n"
-        "• /checklive <username_tiktok>\n"
+    user = update.effective_user
+    name = user.first_name if user else "bạn"
+
+    text = (
+        f"👋 Chào {name}!\n\n"
+        "🤖 Lệnh hỗ trợ:\n"
+        "• /checkfb <idfb> – Xem info Facebook\n"
+        "• /getidfb <link_or_username> – Lấy ID Facebook\n"
+        "• /checkfblive <idfb> – Check Facebook LIVE\n"
+        "• /checklive <username_tiktok> – Check TikTok LIVE\n\n"
+        "📌 Ví dụ:\n"
+        "/getidfb https://www.facebook.com/zuck\n"
+        "/checkfblive 4\n"
+        "/checklive tiktok\n"
     )
+    await update.message.reply_text(text)
 
 async def checkfb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
@@ -39,7 +47,7 @@ async def checkfb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         res = requests.get(FB_INFO_API, params={"id": fb_id}, timeout=15)
         data = res.json()
-    except Exception:
+    except Exception as e:
         await update.message.reply_text("❌ Lỗi gọi API Facebook!")
         return
 
@@ -151,7 +159,10 @@ async def checklive(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ====== MAIN ======
 def main():
-    keep_alive()  # 👈 gọi keep ở đây
+    if not BOT_TOKEN:
+        raise RuntimeError("❌ Chưa set BOT_TOKEN trong Environment của Render!")
+
+    keep_alive()  # chạy web server keep alive
 
     application = ApplicationBuilder().token(BOT_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
