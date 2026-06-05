@@ -8,11 +8,11 @@ keep_alive()
 
 # --- CẤU HÌNH HỆ THỐNG ---
 BOT_TOKEN = "6367532329:AAE4QlpU0abr7lfPTDxZWugKVOcB_usdSYg"  # Thay Token Bot Telegram của bạn vào đây
-ADMIN_ID = 5736655322              # Thay ID Chát Telegram của bạn vào đây
-PRICE_RD = 500                   # Thiết lập giá bán 1 acc ngẫu nhiên (1,000đ)
+ADMIN_ID = 123456789              # Thay ID Chát Telegram của bạn vào đây
+PRICE_RD = 1000                   # Thiết lập giá bán 1 acc ngẫu nhiên (1,000đ)
 
 # Cấu hình đường dẫn hỗ trợ của Shop
-TELEGRAM_GROUP_URL = "https://t.me/baohuydevs" 
+TELEGRAM_GROUP_URL = "https://t.me/your_group_or_channel" 
 ADMIN_USERNAME = "baohuyno1" # Username Telegram viết liền không dấu @
 
 # Cấu hình LOGGING để theo dõi hệ thống trên Render Logs
@@ -481,5 +481,5 @@ if __name__ == '__main__':
     except Exception as e:
         logger.error(f"Không thể dọn dẹp Webhook cũ: {e}")
         
-    # Chạy vòng lặp polling liên tục, tự động bỏ qua các lỗi rớt mạng cục bộ trên Cloud
-    bot.infinity_polling(timeout=20, skip_pending_updates=True, long_polling_timeout=10)
+    # Chạy vòng lặp polling liên tục (Đã fix bỏ tham số skip_pending_updates sai cấu trúc)
+    bot.infinity_polling(timeout=20, long_polling_timeout=10)
