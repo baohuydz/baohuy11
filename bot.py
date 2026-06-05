@@ -8,11 +8,11 @@ keep_alive()
 
 # --- CẤU HÌNH HỆ THỐNG ---
 BOT_TOKEN = "6367532329:AAE4QlpU0abr7lfPTDxZWugKVOcB_usdSYg"  # Thay Token Bot Telegram của bạn vào đây
-ADMIN_ID = 123456789              # Thay ID Chát Telegram của bạn vào đây
-PRICE_RD = 1000                   # Thiết lập giá bán 1 acc ngẫu nhiên (1,000đ)
+ADMIN_ID = 5736655322              # Thay ID Chát Telegram của bạn vào đây
+PRICE_RD = 500                   # Thiết lập giá bán 1 acc ngẫu nhiên (1,000đ)
 
 # Cấu hình đường dẫn hỗ trợ của Shop
-TELEGRAM_GROUP_URL = "https://t.me/your_group_or_channel" 
+TELEGRAM_GROUP_URL = "https://t.me/baohuydevs" 
 ADMIN_USERNAME = "baohuyno1" # Username Telegram viết liền không dấu @
 
 # Cấu hình LOGGING để theo dõi hệ thống trên Render Logs
