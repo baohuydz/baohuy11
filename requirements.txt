@@ -4,3 +4,5 @@ requests
 Werkzeug
 fastapi
 uvicorn
+Pillow
+pyzbar
