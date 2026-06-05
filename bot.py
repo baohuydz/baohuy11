@@ -1,23 +1,22 @@
 import sqlite3
 import logging
-import requests
 import telebot as tele
-# Gọi hàm keep_alive từ file keep_alive.py vừa tạo
+# Gọi hàm keep_alive từ file keep_alive.py đã tách
 from keep_alive import keep_alive
 
 # --- TỰ ĐỘNG KHỞI CHẠY WEB SERVER ĐỂ GIỮ CHẠY 24/7 ---
 keep_alive()
 
 # =====================================================================
-# CẤU HÌNH HỆ THỐNG BOT
+# 1. CẤU HÌNH HỆ THỐNG BOT
 # =====================================================================
-BOT_TOKEN = "6367532329:AAE4QlpU0abr7lfPTDxZWugKVOcB_usdSYg"  # 🔴 Thay Token Bot Telegram của bạn vào đây
+BOT_TOKEN = "6367532329:AAGp-dCbkBs6JHeol5X6bvXEUksG6PwnJ58"  # 🔴 Thay Token Bot Telegram của bạn vào đây
 ADMIN_ID = 5736655322              # 🔴 Thay ID Chat Telegram của bạn vào đây (Kiểu số)
 PRICE_RD = 500                   # Thiết lập giá bán 1 acc ngẫu nhiên (1,000đ)
 
 # Cấu hình thông tin hỗ trợ
-TELEGRAM_GROUP_URL = "https://t.me/baohuydevs"
-ADMIN_USERNAME = "baohuyno1" # Username Telegram viết liền không dấu @
+TELEGRAM_GROUP_URL = "https://t.me/your_group_or_channel" 
+ADMIN_USERNAME = "your_admin_username" # Username Telegram viết liền không dấu @
 
 # Cấu hình log hệ thống để theo dõi lỗi trên Render Logs
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -28,7 +27,7 @@ bot = tele.TeleBot(BOT_TOKEN)
 
 
 # =====================================================================
-# QUẢN LÝ CƠ SỞ DỮ LIỆU (SQLITE TRÊN RENDER)
+# 2. QUẢN LÝ CƠ SỞ DỮ LIỆU (SQLITE TRÊN RENDER)
 # =====================================================================
 def get_db_connection():
     conn = sqlite3.connect('/tmp/shop_lienquan.db', timeout=15)
@@ -53,12 +52,11 @@ def init_db():
             status TEXT DEFAULT 'con_hang'
         )
     ''')
+    # BỎ BIN, ACC, NAME - CHỈ GIỮ LẠI QR_FILE_ID ĐỂ LƯU ẢNH SẾP GỬI
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS config_qr (
             id INTEGER PRIMARY KEY DEFAULT 1,
-            bank_bin TEXT DEFAULT '970422',
-            bank_acc TEXT DEFAULT '0123456789',
-            bank_name TEXT DEFAULT 'NGUYEN VAN A'
+            qr_file_id TEXT DEFAULT NULL
         )
     ''')
     cursor.execute('''
@@ -70,10 +68,11 @@ def init_db():
             status TEXT DEFAULT 'pending'
         )
     ''')
-    cursor.execute("INSERT OR IGNORE INTO config_qr (id, bank_bin, bank_acc, bank_name) VALUES (1, '970422', '0123456789', 'NGUYEN VAN A')")
+    cursor.execute("INSERT OR IGNORE INTO config_qr (id, qr_file_id) VALUES (1, NULL)")
     conn.commit()
     conn.close()
 
+# Chạy khởi tạo database
 init_db()
 
 def check_user(user_id, username):
@@ -88,39 +87,7 @@ def check_user(user_id, username):
 
 
 # =====================================================================
-# BỘ PHÂN TÍCH CHUỒI VIETQR CHUẨN NGÂN HÀNG (EMVCo)
-# =====================================================================
-def parse_vietqr_string(qr_text):
-    try:
-        if "000201" not in qr_text or "3854" not in qr_text:
-            return None
-        
-        tag_38_start = qr_text.find("38")
-        if tag_38_start == -1: return None
-        
-        tag_38_len = int(qr_text[tag_38_start+2 : tag_38_start+4])
-        sub_data = qr_text[tag_38_start+4 : tag_38_start+4+tag_38_len]
-        
-        tag_01_start = sub_data.find("01")
-        if tag_01_start == -1: return None
-        
-        tag_01_len = int(sub_data[tag_01_start+2 : sub_data[tag_01_start+4]])
-        bank_data = sub_data[tag_01_start+4 : tag_01_start+4+tag_01_len]
-        
-        bin_len = int(bank_data[2:4])
-        bank_bin = bank_data[4 : 4+bin_len]
-        
-        acc_start = 4 + bin_len
-        acc_len = int(bank_data[acc_start+2 : acc_start+4])
-        bank_acc = bank_data[acc_start+4 : acc_start+4+acc_len]
-        
-        return bank_bin, bank_acc
-    except Exception:
-        return None
-
-
-# =====================================================================
-# GIAO DIỆN VÀ TÍNH NĂNG KHÁCH HÀNG
+# 3. GIAO DIỆN VÀ TÍNH NĂNG KHÁCH HÀNG
 # =====================================================================
 def get_main_menu_keyboard():
     markup = tele.types.InlineKeyboardMarkup(row_width=2)
@@ -148,79 +115,62 @@ def start_cmd(message):
 
 
 # =====================================================================
-# PHÂN HỆ QUÉT QR ĐỔI CẤU HÌNH BANK (DÙNG API ONLINE KHÔNG LỖI)
+# 4. XỬ LÝ LỆNH /addqr - LƯU FILE ẢNH DO SẾP TỰ GỬI LÊN
 # =====================================================================
 @bot.message_handler(content_types=['photo'])
 def handle_admin_qr_photo(message):
+    # Kiểm tra quyền Admin
     if message.from_user.id != ADMIN_ID:
         return
 
-    status_msg = bot.reply_to(message, "⏳ Đang gửi ảnh lên máy chủ quét dữ liệu QR Bank...")
+    # Kiểm tra xem có kèm chú thích ảnh là /addqr hay không
+    caption = message.caption.strip() if message.caption else ""
+    if not caption.startswith("/addqr"):
+        return
+
+    status_msg = bot.reply_to(message, "⏳ Đang tiến hành lưu ảnh QR code của sếp vào hệ thống...")
     
     try:
-        file_info = bot.get_file(message.photo[-1].file_id)
-        file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info.file_path}"
+        # Lấy trực tiếp file_id từ ảnh gốc sếp gửi
+        target_file_id = message.photo[-1].file_id
         
-        api_scan_url = f"https://api.qrserver.com/v1/read-qr-code/?file={file_url}"
-        response = requests.get(api_scan_url, timeout=15).json()
-        
-        qr_text = None
-        if response and isinstance(response, list) and "symbol" in response[0]:
-            symbol_data = response[0]["symbol"][0]
-            if symbol_data.get("data"):
-                qr_text = symbol_data["data"]
-                
-        if not qr_text:
-            bot.edit_message_text("❌ Không thể tìm thấy hoặc đọc được mã QR nào trong hình ảnh sếp vừa gửi. Vui lòng gửi ảnh chụp trực diện, rõ nét hơn!", message.chat.id, status_msg.message_id)
-            return
-            
-        parsed = parse_vietqr_string(qr_text)
-        
-        if not parsed:
-            bot.edit_message_text("❌ Định dạng mã QR này không phải là mã QR tài khoản ngân hàng chuẩn (VietQR) tại Việt Nam!", message.chat.id, status_msg.message_id)
-            return
-            
-        bank_bin, bank_acc = parsed
-        
+        # Cập nhật duy nhất cột qr_file_id vào Database
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("UPDATE config_qr SET bank_bin = ?, bank_acc = ? WHERE id = 1", (bank_bin, bank_acc))
+        cursor.execute("UPDATE config_qr SET qr_file_id = ? WHERE id = 1", (target_file_id,))
         conn.commit()
         conn.close()
         
         success_text = (
-            f"✅ **CẬP NHẬT QR NHẬN TIỀN THÀNH CÔNG**\n"
+            f"✅ **LƯU ẢNH QR CODE THÀNH CÔNG**\n"
             f"──────────────────────────\n"
-            f"🏦 Mã định danh Ngân hàng (BIN): `{bank_bin}`\n"
-            f"💳 Số tài khoản mới: `{bank_acc}`\n\n"
-            f"ℹ️ _Kể từ bây giờ, khi khách hàng lên đơn nạp, hệ thống sẽ tự động xuất mã QR động chuyển tiền thẳng về tài khoản này của sếp._"
+            f"ℹ️ _Kể từ bây giờ, khi khách hàng lên đơn nạp, Bot sẽ lấy nguyên vẹn bức ảnh này gửi trực tiếp cho khách quét._"
         )
         bot.edit_message_text(success_text, message.chat.id, status_msg.message_id, parse_mode="Markdown")
         
     except Exception as e:
-        logger.error(f"Lỗi phân tích QR: {e}")
-        bot.edit_message_text(f"❌ Có lỗi phát sinh khi xử lý tệp ảnh: `{str(e)}`", message.chat.id, status_msg.message_id, parse_mode="Markdown")
+        logger.error(f"Lỗi khi lưu ảnh QR: {e}")
+        bot.edit_message_text(f"❌ Có lỗi phát sinh khi lưu tệp ảnh: `{str(e)}`", message.chat.id, status_msg.message_id, parse_mode="Markdown")
 
 
 # =====================================================================
-# LOGIC TẠO MÃ QR ĐỘNG GẮN ĐƠN NẠP VÀ MỆNH GIÁ
+# 5. LOGIC TRẢ ẢNH QR GỐC CỦA ADMIN KÈM THÔNG TIN ĐƠN NẠP
 # =====================================================================
 def send_dynamic_qr(chat_id, user_id, username, amount):
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT bank_bin, bank_acc, bank_name FROM config_qr WHERE id = 1")
+    cursor.execute("SELECT qr_file_id FROM config_qr WHERE id = 1")
     row = cursor.fetchone()
     
+    # Tạo yêu cầu nạp tiền vào danh sách chờ phê duyệt
     cursor.execute("INSERT INTO deposit_requests (user_id, username, amount) VALUES (?, ?, ?)", (user_id, username, amount))
     request_id = cursor.lastrowid
     conn.commit()
     conn.close()
 
-    bank_bin, bank_acc, bank_name = row['bank_bin'], row['bank_acc'], row['bank_name']
     memo = f"NAP {request_id}"
     
-    qr_url = f"https://api.vietqr.io/image/{bank_bin}-{bank_acc}-qr_only.jpg?amount={int(amount)}&addInfo={memo}&accountName={bank_name}"
-
+    # Bắn thông báo về máy Admin kèm nút duyệt nhanh đơn hàng
     admin_markup = tele.types.InlineKeyboardMarkup()
     btn_approve = tele.types.InlineKeyboardButton("✅ Duyệt Ngay", callback_data=f"adm_pub_approve_{request_id}")
     btn_reject = tele.types.InlineKeyboardButton("❌ Hủy Đơn", callback_data=f"adm_pub_reject_{request_id}")
@@ -228,26 +178,34 @@ def send_dynamic_qr(chat_id, user_id, username, amount):
 
     bot.send_message(
         ADMIN_ID, 
-        f"🔔 **CÓ ĐƠN NẠP TIỀN ĐANG QUÉT QR (Mã: #{request_id})**\n\n"
+        f"🔔 **CÓ ĐƠN NẠP TIỀN ĐANG CHỜ DUYỆT (Mã: #{request_id})**\n\n"
         f"👤 Khách hàng: @{username} (ID: `{user_id}`)\n"
         f"💵 Số tiền: **{int(amount):,}đ**\n"
-        f"📝 Nội dung cần khớp: `{memo}`\n\n"
-        f"Vui lòng check biến động số dư trên app ngân hàng trước khi bấm Duyệt!",
+        f"📝 Nội dung sếp cần kiểm tra: `{memo}`\n\n"
+        f"Vui lòng check biến động số dư tài khoản trước khi bấm Duyệt!",
         reply_markup=admin_markup, parse_mode="Markdown"
     )
 
+    # Gửi thông tin chuyển khoản cho Khách hàng
     user_text = (
-        f"✨ **MÃ QR NẠP TIỀN TỰ ĐỘNG (ĐƠN #{request_id})** ✨\n"
+        f"✨ **ĐƠN NẠP TIỀN CỦA BẠN (Mã: #{request_id})** ✨\n"
         f"──────────────────────────\n"
         f"💵 Số tiền: **{int(amount):,} VNĐ**\n"
-        f"📝 Nội dung chuyển khoản: `{memo}`\n\n"
+        f"📝 Nội dung chuyển khoản bắt buộc: `{memo}`\n\n"
         f"📌 **HƯỚNG DẪN CHUYỂN KHOẢN:**\n"
-        f"1. Lưu ảnh QR Code này về máy.\n"
-        f"2. Mở app ngân hàng quét mã QR, hệ thống sẽ tự động điền số tiền và nội dung.\n"
-        f"3. Xác nhận chuyển khoản. Số dư tài khoản Telegram sẽ tự cộng sau khi Admin phê duyệt đơn!"
+        f"1. Quét mã QR trong ảnh đính kèm để tiến hành chuyển khoản.\n"
+        f"2. Ghi chính xác nội dung chuyển khoản là `{memo}` (Không tự ý sửa chữ).\n"
+        f"3. Hệ thống sẽ tự động cộng ví cho bạn ngay sau khi Admin phê duyệt đơn hàng!"
     )
     user_markup = tele.types.InlineKeyboardMarkup().add(tele.types.InlineKeyboardButton("⬅️ Quay Lại Menu Chính", callback_data="user_back_to_main_from_photo"))
-    bot.send_photo(chat_id, qr_url, caption=user_text, reply_markup=user_markup, parse_mode="Markdown")
+
+    # Kiểm tra xem Admin đã tải ảnh QR nào lên chưa
+    if row and row['qr_file_id']:
+        # Gửi trực tiếp file ảnh gốc bằng file_id
+        bot.send_photo(chat_id, row['qr_file_id'], caption=user_text, reply_markup=user_markup, parse_mode="Markdown")
+    else:
+        # Nếu chưa có ảnh trong database, thông báo text cho khách đỡ lỗi
+        bot.send_message(chat_id, f"⚠️ Shop chưa cập nhật ảnh mã QR nhận tiền.\n\n{user_text}", reply_markup=user_markup, parse_mode="Markdown")
 
 def process_custom_amount(message):
     try:
@@ -262,7 +220,7 @@ def process_custom_amount(message):
 
 
 # =====================================================================
-# XỬ LÝ SỰ KIỆN NÚT BẤM (CALLBACK QUERY)
+# 6. XỬ LÝ SỰ KIỆN NÚT BẤM (CALLBACK QUERY)
 # =====================================================================
 @bot.callback_query_handler(func=lambda call: True)
 def handle_all_callbacks(call):
@@ -270,6 +228,7 @@ def handle_all_callbacks(call):
     username = call.from_user.username if call.from_user.username else f"User_{user_id}"
     data = call.data
 
+    # --- PHÂN HỆ KHÁCH HÀNG ---
     if data == "user_back_to_main":
         welcome_text = "🤖 **CHÀO MỪNG BẠN ĐẾN VỚI SHOP LIÊN QUÂN TỰ ĐỘNG**\n──────────────────────────\n👇 Vui lòng chọn một chức năng dưới menu để bắt đầu:"
         bot.edit_message_text(welcome_text, call.message.chat.id, call.message.message_id, reply_markup=get_main_menu_keyboard(), parse_mode="Markdown")
@@ -300,7 +259,7 @@ def handle_all_callbacks(call):
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
 
     elif data == "user_deposit_select":
-        text = "💰 **CHỌN MỆNH GIÁ CẦN NẠP VÀO VÍ**\n──────────────────────────\nVui lòng chọn một trong các mệnh giá nhanh bên dưới hoặc bấm **Tự nhập số tiền** để hệ thống tự động xuất mã QR Code chính xác:"
+        text = "💰 **CHỌN MỆNH GIÁ CẦN NẠP VÀO VÍ**\n──────────────────────────\nVui lòng chọn một trong các mệnh giá nhanh bên dưới hoặc bấm **Tự nhập số tiền** để xem thông tin tài khoản chuyển khoản:"
         markup = tele.types.InlineKeyboardMarkup(row_width=2)
         markup.add(
             tele.types.InlineKeyboardButton("💵 10,000đ", callback_data="user_dep_fix_10000"),
@@ -362,7 +321,7 @@ def handle_all_callbacks(call):
         markup = tele.types.InlineKeyboardMarkup().add(tele.types.InlineKeyboardButton("⬅️ Quay Lại Menu Chính", callback_data="user_back_to_main"))
         bot.edit_message_text(success_msg, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
 
-    # --- ADMIN CONTROL PANEL ---
+    # --- PHÂN HỆ QUẢN TRỊ ADMIN ---
     if data.startswith("adm_") or data.startswith("panel_"):
         if user_id != ADMIN_ID:
             bot.answer_callback_query(call.id, "❌ Lỗi: Bạn không có quyền Admin!", show_alert=True)
@@ -424,7 +383,7 @@ def handle_all_callbacks(call):
         bot.edit_message_text(guide_text, call.message.chat.id, call.message.message_id, reply_markup=tele.types.InlineKeyboardMarkup().add(tele.types.InlineKeyboardButton("⬅️ Quay lại", callback_data="panel_main")), parse_mode="Markdown")
 
     elif data == "panel_guide_qr":
-        guide_text = "⚙️ **CÁCH ĐỔI CẤU HÌNH QR BANK**\n\nCực kỳ đơn giản! Sếp dùng tài khoản Admin **gửi trực tiếp hình ảnh mã QR ngân hàng** mới của sếp vào khung chát này. Bot sẽ tự động xử lý qua hệ thống Cloud API để cập nhật thông tin!"
+        guide_text = "⚙️ **CÁCH ĐỔI ẢNH QR MỚI**\n\nSếp đính kèm tệp ảnh mã ngân hàng mới của sếp rồi gửi thẳng vào đây, kèm theo ở phần mô tả nội dung caption chữ: `/addqr`. Hệ thống sẽ tự động đồng bộ ảnh gốc!"
         bot.edit_message_text(guide_text, call.message.chat.id, call.message.message_id, reply_markup=tele.types.InlineKeyboardMarkup().add(tele.types.InlineKeyboardButton("⬅️ Quay lại", callback_data="panel_main")), parse_mode="Markdown")
 
     elif data == "panel_main":
@@ -434,7 +393,7 @@ def handle_all_callbacks(call):
 
 
 # =====================================================================
-# LỆNH VĂN BẢN (COMMANDS) DÀNH CHO ADMIN
+# 7. LỆNH VĂN BẢN (COMMANDS) DÀNH CHO ADMIN
 # =====================================================================
 @bot.message_handler(commands=['admin_panel'])
 def admin_panel_cmd(message):
@@ -463,7 +422,7 @@ def addacc_cmd(message):
 
 
 # =====================================================================
-# KHỞI CHẠY ĐỘNG CƠ POLLING
+# 8. KHỞI CHẠY ĐỘNG CƠ POLLING
 # =====================================================================
 if __name__ == '__main__':
     logger.info("Bot đang kết nối với máy chủ Render...")
