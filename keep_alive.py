@@ -1,11 +1,18 @@
-from fastapi import FastAPI
-import uvicorn
+import os
+from flask import Flask
+from threading import Thread
 
-app = FastAPI()
+app = Flask('')
 
-@app.get("/")
-def ping():
-    return {"status": "bot is huy"}
+@app.route('/')
+def home():
+    return "Hệ thống Bot Shop Liên Quân đang hoạt động trực tuyến trên Render!"
+
+def run():
+    # Nhận PORT động do Render cấp, nếu không có sẽ mặc định chạy 8080
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
 
 def keep_alive():
-    uvicorn.run(app, host="0.0.0.0", port=10000)
+    t = Thread(target=run)
+    t.start()
