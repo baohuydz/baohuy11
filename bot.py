@@ -15,8 +15,8 @@ ADMIN_ID = 5736655322              # 🔴 Thay ID Chat Telegram của bạn vào
 PRICE_RD = 500                   # Thiết lập giá bán 1 acc ngẫu nhiên (1,000đ)
 
 # Cấu hình thông tin hỗ trợ
-TELEGRAM_GROUP_URL = "https://t.me/your_group_or_channel" 
-ADMIN_USERNAME = "your_admin_username" # Username Telegram viết liền không dấu @
+TELEGRAM_GROUP_URL = "https://t.me/baohuydevs" 
+ADMIN_USERNAME = "baohuyno1" # Username Telegram viết liền không dấu @
 
 # Cấu hình log hệ thống để theo dõi lỗi trên Render Logs
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
