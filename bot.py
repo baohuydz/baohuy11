@@ -7,7 +7,7 @@ from keep_alive import keep_alive
 keep_alive()
 
 # --- CẤU HÌNH HỆ THỐNG ---
-BOT_TOKEN = "6367532329:AAFnrKe1Ra3UWiRV-PDGNBa49rP030NJcd0"  # Thay Token Bot Telegram của bạn vào đây
+BOT_TOKEN = "6367532329:AAE4QlpU0abr7lfPTDxZWugKVOcB_usdSYg"  # Thay Token Bot Telegram của bạn vào đây
 ADMIN_ID = 5736655322              # Thay ID Chát Telegram của bạn vào đây
 PRICE_RD = 500                   # Thiết lập giá bán 1 acc ngẫu nhiên (1,000đ)
 
