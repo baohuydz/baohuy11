@@ -1,8 +1,4 @@
-python-telegram-bot
-python-dotenv
-Flask
-pytesseract
-Pillow
 pyTelegramBotAPI
-fastapi
-uvicorn
+Flask
+requests
+Werkzeug
