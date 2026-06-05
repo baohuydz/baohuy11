@@ -1,431 +1,239 @@
 import sqlite3
 import logging
-import telebot as tele
-# Gọi hàm keep_alive từ file keep_alive.py đã tách
-from keep_alive import keep_alive
+import time
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 
-# --- TỰ ĐỘNG KHỞI CHẠY WEB SERVER ĐỂ GIỮ CHẠY 24/7 ---
-keep_alive()
+# --- CẤU HÌNH ---
+TOKEN = '6367532329:AAGp-dCbkBs6JHeol5X6bvXEUksG6PwnJ58'      # Token lấy từ @BotFather
+ADMIN_ID = 5736655322         # Thay ID Telegram của bạn vào đây
+SUPPORT_URL = 'https://t.me/baohuyno1'  # Thay link Telegram cá nhân của bạn để hỗ trợ
+# ----------------
 
-# =====================================================================
-# 1. CẤU HÌNH HỆ THỐNG BOT
-# =====================================================================
-BOT_TOKEN = "6367532329:AAGp-dCbkBs6JHeol5X6bvXEUksG6PwnJ58"  # 🔴 Thay Token Bot Telegram của bạn vào đây
-ADMIN_ID = 5736655322              # 🔴 Thay ID Chat Telegram của bạn vào đây (Kiểu số)
-PRICE_RD = 500                   # Thiết lập giá bán 1 acc ngẫu nhiên (1,000đ)
-
-# Cấu hình thông tin hỗ trợ
-TELEGRAM_GROUP_URL = "https://t.me/baohuydevs" 
-ADMIN_USERNAME = "baohuyno1" # Username Telegram viết liền không dấu @
-
-# Cấu hình log hệ thống để theo dõi lỗi trên Render Logs
+# Thiết lập log hệ thống
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
-logger = logging.getLogger(__name__)
 
-# Khởi tạo instance Bot
-bot = tele.TeleBot(BOT_TOKEN)
+# Khởi tạo Database SQLite (Lưu trữ vĩnh viễn)
+conn = sqlite3.connect('shop.db', check_same_thread=False)
+cursor = conn.cursor()
+cursor.execute('''CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, balance INTEGER DEFAULT 0)''')
+cursor.execute('''CREATE TABLE IF NOT EXISTS accounts (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT)''')
+cursor.execute('''CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)''')
+conn.commit()
 
-
-# =====================================================================
-# 2. QUẢN LÝ CƠ SỞ DỮ LIỆU (SQLITE TRÊN RENDER)
-# =====================================================================
-def get_db_connection():
-    conn = sqlite3.connect('/tmp/shop_lienquan.db', timeout=15)
-    conn.execute('PRAGMA journal_mode=WAL;')
-    conn.row_factory = sqlite3.Row
-    return conn
-
-def init_db():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY,
-            username TEXT,
-            balance REAL DEFAULT 0
-        )
-    ''')
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS stock_rd (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            account_info TEXT,
-            status TEXT DEFAULT 'con_hang'
-        )
-    ''')
-    # BỎ BIN, ACC, NAME - CHỈ GIỮ LẠI QR_FILE_ID ĐỂ LƯU ẢNH SẾP GỬI
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS config_qr (
-            id INTEGER PRIMARY KEY DEFAULT 1,
-            qr_file_id TEXT DEFAULT NULL
-        )
-    ''')
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS deposit_requests (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            username TEXT,
-            amount REAL,
-            status TEXT DEFAULT 'pending'
-        )
-    ''')
-    cursor.execute("INSERT OR IGNORE INTO config_qr (id, qr_file_id) VALUES (1, NULL)")
-    conn.commit()
-    conn.close()
-
-# Chạy khởi tạo database
-init_db()
-
-def check_user(user_id, username):
-    username_clean = username if username else f"User_{user_id}"
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
-    if not cursor.fetchone():
-        cursor.execute("INSERT INTO users (user_id, username, balance) VALUES (?, ?, 0)", (user_id, username_clean))
-        conn.commit()
-    conn.close()
-
-
-# =====================================================================
-# 3. GIAO DIỆN VÀ TÍNH NĂNG KHÁCH HÀNG
-# =====================================================================
-def get_main_menu_keyboard():
-    markup = tele.types.InlineKeyboardMarkup(row_width=2)
-    btn_buy = tele.types.InlineKeyboardButton("🛒 Mua Acc Ngẫu Nhiên", callback_data="user_buy_rd")
-    btn_stock = tele.types.InlineKeyboardButton("📦 Kiểm Tra Kho", callback_data="user_check_stock")
-    btn_balance = tele.types.InlineKeyboardButton("💳 Kiểm Tra Số Dư", callback_data="user_check_balance")
-    btn_deposit = tele.types.InlineKeyboardButton("💰 Nạp Tiền Vào Ví", callback_data="user_deposit_select")
-    btn_support = tele.types.InlineKeyboardButton("📞 Liên Hệ Admin / Hỗ Trợ", callback_data="user_support")
+# --- GIAO DIỆN MENU CHÍNH ---
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("💳 Nạp tiền", callback_data='menu_nap')],
+        [InlineKeyboardButton("💰 Số dư", callback_data='balance')],
+        [InlineKeyboardButton("🛒 Mua Acc (1,000đ)", callback_data='buy')],
+        [InlineKeyboardButton("📦 Kho hàng", callback_data='stock')],
+        [InlineKeyboardButton("🎧 Admin hỗ trợ", url=SUPPORT_URL)]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
     
-    markup.add(btn_buy, btn_stock, btn_balance, btn_deposit)
-    markup.add(btn_support)
-    return markup
+    if update.message:
+        await update.message.reply_text("🖥 **HỆ THỐNG LIÊN QUÂN**\nChào mừng bạn đến với shop tự động!", reply_markup=reply_markup, parse_mode='Markdown')
+    elif update.callback_query:
+        await update.callback_query.message.edit_text("🖥 **HỆ THỐNG LIÊN QUÂN**\nChào mừng bạn đến với shop tự động!", reply_markup=reply_markup, parse_mode='Markdown')
 
-@bot.message_handler(commands=['start'])
-def start_cmd(message):
-    check_user(message.from_user.id, message.from_user.username)
-    welcome_text = (
-        f"🤖 **CHÀO MỪNG BẠN ĐẾN VỚI SHOP LIÊN QUÂN TỰ ĐỘNG**\n"
-        f"──────────────────────────\n"
-        f"👋 Xin chào, *{message.from_user.first_name}*!\n"
-        f"🎯 Hệ thống cung cấp acc Random uy tín, trả acc tự động 24/7.\n\n"
-        f"👇 Vui lòng chọn một chức năng dưới menu để bắt đầu:"
-    )
-    bot.reply_to(message, welcome_text, reply_markup=get_main_menu_keyboard(), parse_mode="Markdown")
-
-
-# =====================================================================
-# 4. XỬ LÝ LỆNH /addqr - LƯU FILE ẢNH DO SẾP TỰ GỬI LÊN
-# =====================================================================
-@bot.message_handler(content_types=['photo'])
-def handle_admin_qr_photo(message):
-    # Kiểm tra quyền Admin
-    if message.from_user.id != ADMIN_ID:
-        return
-
-    # Kiểm tra xem có kèm chú thích ảnh là /addqr hay không
-    caption = message.caption.strip() if message.caption else ""
-    if not caption.startswith("/addqr"):
-        return
-
-    status_msg = bot.reply_to(message, "⏳ Đang tiến hành lưu ảnh QR code của sếp vào hệ thống...")
+# --- XỬ LÝ NÚT BẤM (CALLBACK QUERY) ---
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    data = query.data
     
-    try:
-        # Lấy trực tiếp file_id từ ảnh gốc sếp gửi
-        target_file_id = message.photo[-1].file_id
+    # 1. Menu chọn mệnh giá nạp
+    if data == 'menu_nap':
+        cursor.execute("SELECT value FROM settings WHERE key='qr_file_id'")
+        row = cursor.fetchone()
         
-        # Cập nhật duy nhất cột qr_file_id vào Database
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("UPDATE config_qr SET qr_file_id = ? WHERE id = 1", (target_file_id,))
-        conn.commit()
-        conn.close()
+        keyboard = [
+            [InlineKeyboardButton("10k", callback_data='nap_10000'), InlineKeyboardButton("50k", callback_data='nap_50000')],
+            [InlineKeyboardButton("100k", callback_data='nap_100000'), InlineKeyboardButton("200k", callback_data='nap_200000')],
+            [InlineKeyboardButton("« Quay lại", callback_data='back_start')]
+        ]
         
-        success_text = (
-            f"✅ **LƯU ẢNH QR CODE THÀNH CÔNG**\n"
-            f"──────────────────────────\n"
-            f"ℹ️ _Kể từ bây giờ, khi khách hàng lên đơn nạp, Bot sẽ lấy nguyên vẹn bức ảnh này gửi trực tiếp cho khách quét._"
+        if row:
+            await query.message.delete() # Xóa menu chữ để gửi ảnh QR kèm menu mới
+            await context.bot.send_photo(
+                chat_id=query.message.chat_id,
+                photo=row[0],
+                caption="💳 **Quét mã QR ngân hàng bên trên và chọn đúng mệnh giá bạn muốn nạp dưới đây:**",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode='Markdown'
+            )
+        else:
+            await query.edit_message_text("💵 Chọn mệnh giá nạp (Admin chưa cấu hình ảnh QR bằng lệnh /addqr):", reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    # 2. Khách hàng chọn một mệnh giá nạp cụ thể (Cải tiến chèn Timestamp thời gian gửi)
+    elif data.startswith('nap_'):
+        amount = data.split('_')[1]
+        current_time = int(time.time()) # Lưu mốc giây hiện tại
+        
+        # Chèn thời gian hiện tại vào cuối callback_data của nút duyệt
+        admin_keyboard = [[
+            InlineKeyboardButton("✅ Duyệt", callback_data=f"approve_{user_id}_{amount}_{current_time}"),
+            InlineKeyboardButton("❌ Hủy đơn", callback_data=f"deny_{user_id}")
+        ]]
+        
+        # Gửi thông báo trực tiếp đến tài khoản Admin
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=f"🔔 **YÊU CẦU NẠP TIỀN (Hạn chót 20 phút)**\n- Khách hàng ID: `{user_id}`\n- Số tiền: {int(amount):,}đ\n\n*Hệ thống sẽ tự hủy quyền duyệt sau 20 phút nữa để đảm bảo an toàn!*",
+            reply_markup=InlineKeyboardMarkup(admin_keyboard),
+            parse_mode='Markdown'
         )
-        bot.edit_message_text(success_text, message.chat.id, status_msg.message_id, parse_mode="Markdown")
         
-    except Exception as e:
-        logger.error(f"Lỗi khi lưu ảnh QR: {e}")
-        bot.edit_message_text(f"❌ Có lỗi phát sinh khi lưu tệp ảnh: `{str(e)}`", message.chat.id, status_msg.message_id, parse_mode="Markdown")
+        # Phản hồi cho người dùng tùy thuộc giao diện trước đó là ảnh hay chữ
+        if query.message.photo:
+            await query.message.delete()
+            await context.bot.send_message(chat_id=query.message.chat_id, text="✅ Đã gửi yêu cầu nạp tiền đến Admin.\n⚠️ Lưu ý: Yêu cầu của bạn chỉ có hiệu lực kiểm tra và duyệt trong vòng 20 phút!")
+        else:
+            await query.edit_message_text("✅ Đã gửi yêu cầu nạp tiền đến Admin.\n⚠️ Lưu ý: Yêu cầu của bạn chỉ có hiệu lực kiểm tra và duyệt trong vòng 20 phút!")
 
-
-# =====================================================================
-# 5. LOGIC TRẢ ẢNH QR GỐC CỦA ADMIN KÈM THÔNG TIN ĐƠN NẠP
-# =====================================================================
-def send_dynamic_qr(chat_id, user_id, username, amount):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT qr_file_id FROM config_qr WHERE id = 1")
-    row = cursor.fetchone()
-    
-    # Tạo yêu cầu nạp tiền vào danh sách chờ phê duyệt
-    cursor.execute("INSERT INTO deposit_requests (user_id, username, amount) VALUES (?, ?, ?)", (user_id, username, amount))
-    request_id = cursor.lastrowid
-    conn.commit()
-    conn.close()
-
-    memo = f"NAP {request_id}"
-    
-    # Bắn thông báo về máy Admin kèm nút duyệt nhanh đơn hàng
-    admin_markup = tele.types.InlineKeyboardMarkup()
-    btn_approve = tele.types.InlineKeyboardButton("✅ Duyệt Ngay", callback_data=f"adm_pub_approve_{request_id}")
-    btn_reject = tele.types.InlineKeyboardButton("❌ Hủy Đơn", callback_data=f"adm_pub_reject_{request_id}")
-    admin_markup.add(btn_approve, btn_reject)
-
-    bot.send_message(
-        ADMIN_ID, 
-        f"🔔 **CÓ ĐƠN NẠP TIỀN ĐANG CHỜ DUYỆT (Mã: #{request_id})**\n\n"
-        f"👤 Khách hàng: @{username} (ID: `{user_id}`)\n"
-        f"💵 Số tiền: **{int(amount):,}đ**\n"
-        f"📝 Nội dung sếp cần kiểm tra: `{memo}`\n\n"
-        f"Vui lòng check biến động số dư tài khoản trước khi bấm Duyệt!",
-        reply_markup=admin_markup, parse_mode="Markdown"
-    )
-
-    # Gửi thông tin chuyển khoản cho Khách hàng
-    user_text = (
-        f"✨ **ĐƠN NẠP TIỀN CỦA BẠN (Mã: #{request_id})** ✨\n"
-        f"──────────────────────────\n"
-        f"💵 Số tiền: **{int(amount):,} VNĐ**\n"
-        f"📝 Nội dung chuyển khoản bắt buộc: `{memo}`\n\n"
-        f"📌 **HƯỚNG DẪN CHUYỂN KHOẢN:**\n"
-        f"1. Quét mã QR trong ảnh đính kèm để tiến hành chuyển khoản.\n"
-        f"2. Ghi chính xác nội dung chuyển khoản là `{memo}` (Không tự ý sửa chữ).\n"
-        f"3. Hệ thống sẽ tự động cộng ví cho bạn ngay sau khi Admin phê duyệt đơn hàng!"
-    )
-    user_markup = tele.types.InlineKeyboardMarkup().add(tele.types.InlineKeyboardButton("⬅️ Quay Lại Menu Chính", callback_data="user_back_to_main_from_photo"))
-
-    # Kiểm tra xem Admin đã tải ảnh QR nào lên chưa
-    if row and row['qr_file_id']:
-        # Gửi trực tiếp file ảnh gốc bằng file_id
-        bot.send_photo(chat_id, row['qr_file_id'], caption=user_text, reply_markup=user_markup, parse_mode="Markdown")
-    else:
-        # Nếu chưa có ảnh trong database, thông báo text cho khách đỡ lỗi
-        bot.send_message(chat_id, f"⚠️ Shop chưa cập nhật ảnh mã QR nhận tiền.\n\n{user_text}", reply_markup=user_markup, parse_mode="Markdown")
-
-def process_custom_amount(message):
-    try:
-        amount = float(message.text.strip())
-        if amount < 1000:
-            bot.reply_to(message, "❌ Số tiền nạp tối thiểu phải từ **1,000đ** trở lên. Vui lòng vào lại Menu để thử lại.")
-            return
-        username = message.from_user.username if message.from_user.username else f"User_{message.from_user.id}"
-        send_dynamic_qr(message.chat.id, message.from_user.id, username, amount)
-    except ValueError:
-        bot.reply_to(message, "❌ Lỗi định dạng chữ số. Vui lòng nhập số tiền bằng ký tự số (Ví dụ: 50000).")
-
-
-# =====================================================================
-# 6. XỬ LÝ SỰ KIỆN NÚT BẤM (CALLBACK QUERY)
-# =====================================================================
-@bot.callback_query_handler(func=lambda call: True)
-def handle_all_callbacks(call):
-    user_id = call.from_user.id
-    username = call.from_user.username if call.from_user.username else f"User_{user_id}"
-    data = call.data
-
-    # --- PHÂN HỆ KHÁCH HÀNG ---
-    if data == "user_back_to_main":
-        welcome_text = "🤖 **CHÀO MỪNG BẠN ĐẾN VỚI SHOP LIÊN QUÂN TỰ ĐỘNG**\n──────────────────────────\n👇 Vui lòng chọn một chức năng dưới menu để bắt đầu:"
-        bot.edit_message_text(welcome_text, call.message.chat.id, call.message.message_id, reply_markup=get_main_menu_keyboard(), parse_mode="Markdown")
-
-    elif data == "user_check_balance":
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
-        balance = cursor.fetchone()['balance']
-        conn.close()
-        text = f"💳 **THÔNG TIN TÀI KHOẢN CỦA BẠN**\n──────────────────────────\n👤 Tên tài khoản: @{username}\n🆔 ID Telegram: `{user_id}`\n💵 Số dư hiện tại: **{int(balance):,} VNĐ**"
-        markup = tele.types.InlineKeyboardMarkup().add(tele.types.InlineKeyboardButton("💰 Nạp Tiền Ngay", callback_data="user_deposit_select")).add(tele.types.InlineKeyboardButton("⬅️ Quay Lại Menu", callback_data="user_back_to_main"))
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
-
-    elif data == "user_check_stock":
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) as total FROM stock_rd WHERE status = 'con_hang'")
-        count = cursor.fetchone()['total']
-        conn.close()
-        text = f"📦 **THÔNG TIN KHO HÀNG HIỆN TẠI**\n──────────────────────────\n🏷 Sản phẩm: **Acc Liên Quân Random**\n💵 Giá bán lẻ: **{PRICE_RD:,}đ / acc**\n⚡ Tình trạng kho: Còn **{count}** tài khoản"
-        markup = tele.types.InlineKeyboardMarkup().add(tele.types.InlineKeyboardButton("🛒 Mua Liền Tay", callback_data="user_buy_rd")).add(tele.types.InlineKeyboardButton("⬅️ Quay Lại Menu", callback_data="user_back_to_main"))
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
-
-    elif data == "user_support":
-        text = f"📞 **TRUNG TÂM HỖ TRỢ KHÁCH HÀNG**\n──────────────────────────\n👤 **Admin Chăm Sóc:** @{ADMIN_USERNAME}\n⏰ Thời gian hỗ trợ: 08:00 - 23:00 hàng ngày."
-        markup = tele.types.InlineKeyboardMarkup().add(tele.types.InlineKeyboardButton("💬 Tham Gia Nhóm Telegram Shop", url=TELEGRAM_GROUP_URL)).add(tele.types.InlineKeyboardButton("⬅️ Quay Lại Menu", callback_data="user_back_to_main"))
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
-
-    elif data == "user_deposit_select":
-        text = "💰 **CHỌN MỆNH GIÁ CẦN NẠP VÀO VÍ**\n──────────────────────────\nVui lòng chọn một trong các mệnh giá nhanh bên dưới hoặc bấm **Tự nhập số tiền** để xem thông tin tài khoản chuyển khoản:"
-        markup = tele.types.InlineKeyboardMarkup(row_width=2)
-        markup.add(
-            tele.types.InlineKeyboardButton("💵 10,000đ", callback_data="user_dep_fix_10000"),
-            tele.types.InlineKeyboardButton("💵 20,000đ", callback_data="user_dep_fix_20000"),
-            tele.types.InlineKeyboardButton("💵 50,000đ", callback_data="user_dep_fix_50000"),
-            tele.types.InlineKeyboardButton("💵 100,000đ", callback_data="user_dep_fix_100000")
-        )
-        markup.add(tele.types.InlineKeyboardButton("✍️ Tự nhập số tiền mong muốn", callback_data="user_dep_custom"))
-        markup.add(tele.types.InlineKeyboardButton("⬅️ Quay Lại Menu", callback_data="user_back_to_main"))
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
-
-    elif data.startswith("user_dep_fix_"):
-        amount = float(data.split('_')[3])
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-        send_dynamic_qr(call.message.chat.id, user_id, username, amount)
-
-    elif data == "user_dep_custom":
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-        msg = bot.send_message(call.message.chat.id, "✍️ Sếp vui lòng **nhập số tiền bằng số** cần nạp vào ô chát (Ví dụ: `35000`):", parse_mode="Markdown")
-        bot.register_next_step_handler(msg, process_custom_amount)
-
-    elif data == "user_back_to_main_from_photo":
-        bot.delete_message(call.message.chat.id, call.message.message_id)
-        welcome_text = "🤖 **CHÀO MỪNG BẠN ĐẾN VỚI SHOP LIÊN QUÂN TỰ ĐỘNG**\n──────────────────────────\n👇 Vui lòng chọn một chức năng dưới menu để bắt đầu:"
-        bot.send_message(call.message.chat.id, welcome_text, reply_markup=get_main_menu_keyboard(), parse_mode="Markdown")
-
-    elif data == "user_buy_rd":
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
-        balance = cursor.fetchone()['balance']
+    # 3. Kiểm tra số dư tài khoản khách
+    elif data == 'balance':
+        cursor.execute("SELECT balance FROM users WHERE user_id=?", (user_id,))
+        row = cursor.fetchone()
+        bal = row[0] if row else 0
         
-        if balance < PRICE_RD:
-            conn.close()
-            text = f"❌ **GIAO DỊCH THẤT BẠI**\n──────────────────────────\nSố dư tài khoản không đủ.\n💵 Giá 1 acc: **{PRICE_RD:,}đ**\n💳 Ví của bạn: **{int(balance):,}đ**"
-            markup = tele.types.InlineKeyboardMarkup().add(tele.types.InlineKeyboardButton("💰 Nạp Tiền Ngay", callback_data="user_deposit_select")).add(tele.types.InlineKeyboardButton("⬅️ Quay Lại Menu", callback_data="user_back_to_main"))
-            bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
-            return
+        keyboard = [[InlineKeyboardButton("« Quay lại", callback_data='back_start')]]
+        await query.edit_message_text(f"💰 Số dư hiện tại của bạn là: **{bal:,}đ**", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+    # 4. Logic xử lý mua tài khoản (Giá cố định 1,000đ)
+    elif data == 'buy':
+        price = 1000  
+        
+        cursor.execute("SELECT balance FROM users WHERE user_id=?", (user_id,))
+        row_user = cursor.fetchone()
+        bal = row_user[0] if row_user else 0
+        
+        cursor.execute("SELECT id, data FROM accounts ORDER BY id ASC LIMIT 1")
+        row_acc = cursor.fetchone()
+        
+        keyboard = [[InlineKeyboardButton("« Quay lại", callback_data='back_start')]]
+        
+        if bal < price:
+            await query.edit_message_text("❌ Tài khoản của bạn không đủ tiền! Vui lòng nạp thêm.", reply_markup=InlineKeyboardMarkup(keyboard))
+        elif not row_acc:
+            await query.edit_message_text("❌ Hệ thống hiện tại đang hết hàng, vui lòng quay lại sau.", reply_markup=InlineKeyboardMarkup(keyboard))
+        else:
+            acc_id, acc_data = row_acc
+            new_balance = bal - price
             
-        cursor.execute("SELECT id, account_info FROM stock_rd WHERE status = 'con_hang' LIMIT 1")
-        acc = cursor.fetchone()
-        
-        if not acc:
-            conn.close()
-            text = "😭 **HẾT HÀNG MẤT RỒI**\n──────────────────────────\nHiện tại kho hàng ngẫu nhiên vừa hết sạch hàng. Hãy liên hệ Admin để bổ sung!"
-            markup = tele.types.InlineKeyboardMarkup().add(tele.types.InlineKeyboardButton("⬅️ Quay Lại", callback_data="user_back_to_main"))
-            bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
-            return
+            cursor.execute("UPDATE users SET balance=? WHERE user_id=?", (new_balance, user_id))
+            cursor.execute("DELETE FROM accounts WHERE id=?", (acc_id,))
+            conn.commit()
             
-        acc_id, acc_info = acc['id'], acc['account_info']
-        new_balance = balance - PRICE_RD
-        
-        cursor.execute("UPDATE users SET balance = ? WHERE user_id = ?", (new_balance, user_id))
-        cursor.execute("UPDATE stock_rd SET status = 'da_ban' WHERE id = ?", (acc_id,))
-        conn.commit()
-        conn.close()
-        
-        success_msg = f"🎉 **MUA TÀI KHOẢN THÀNH CÔNG** 🎉\n──────────────────────────\n🔑 **Thông tin tài khoản:**\n`{acc_info}`\n──────────────────────────\n💵 Số tiền đã trừ: -{PRICE_RD:,}đ\n💳 Số dư còn lại: **{int(new_balance):,}đ**"
-        markup = tele.types.InlineKeyboardMarkup().add(tele.types.InlineKeyboardButton("⬅️ Quay Lại Menu Chính", callback_data="user_back_to_main"))
-        bot.edit_message_text(success_msg, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+            await query.edit_message_text(f"🎉 **MUA TÀI KHOẢN THÀNH CÔNG!**\n\nThông tin tài khoản của bạn:\n`{acc_data}`\n\n_Số dư còn lại: {new_balance:,}đ_", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
-    # --- PHÂN HỆ QUẢN TRỊ ADMIN ---
-    if data.startswith("adm_") or data.startswith("panel_"):
+    # 5. Xem số lượng tồn kho
+    elif data == 'stock':
+        cursor.execute("SELECT COUNT(*) FROM accounts")
+        count = cursor.fetchone()[0]
+        keyboard = [[InlineKeyboardButton("« Quay lại", callback_data='back_start')]]
+        await query.edit_message_text(f"📦 Số lượng tài khoản hiện có trong kho: **{count}** acc.", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+
+    # 6. Quay lại menu chính và dọn dẹp tin nhắn ảnh cũ
+    elif data == 'back_start':
+        if query.message.photo:
+            await query.message.delete()
+            keyboard = [
+                [InlineKeyboardButton("💳 Nạp tiền", callback_data='menu_nap')],
+                [InlineKeyboardButton("💰 Số dư", callback_data='balance')],
+                [InlineKeyboardButton("🛒 Mua Acc (1,000đ)", callback_data='buy')],
+                [InlineKeyboardButton("📦 Kho hàng", callback_data='stock')],
+                [InlineKeyboardButton("🎧 Admin hỗ trợ", url=SUPPORT_URL)]
+            ]
+            await context.bot.send_message(chat_id=query.message.chat_id, text="🖥 **HỆ THỐNG LIÊN QUÂN**\nChào mừng bạn đến với shop tự động!", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        else:
+            await start(update, context)
+
+    # 7. Admin bấm nút Duyệt Cộng Tiền (Cải tiến check thời gian quá 20 phút)
+    elif data.startswith('approve_'):
         if user_id != ADMIN_ID:
-            bot.answer_callback_query(call.id, "❌ Lỗi: Bạn không có quyền Admin!", show_alert=True)
-            return
-
-    if data.startswith("adm_pub_"):
-        parts = data.split('_')
-        action = parts[2] 
-        request_id = int(parts[3])
-        
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT user_id, amount, status FROM deposit_requests WHERE id = ?", (request_id,))
-        req = cursor.fetchone()
-        
-        if not req or req['status'] != 'pending':
-            conn.close()
-            bot.edit_message_text(f"⚠️ Đơn hàng #{request_id} đã được xử lý từ trước.", call.message.chat.id, call.message.message_id)
             return
             
-        target_user_id = req['user_id']
-        amount = req['amount']
+        _, uid, amt, created_time = data.split('_')
+        uid, amt, created_time = int(uid), int(amt), int(created_time)
         
-        if action == "approve":
-            cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (amount, target_user_id))
-            cursor.execute("UPDATE deposit_requests SET status = 'approved' WHERE id = ?", (request_id,))
-            conn.commit()
-            conn.close()
-            bot.edit_message_text(f"✅ Đã duyệt thành công và cộng **+{int(amount):,}đ** cho đơn số #`{request_id}`.", call.message.chat.id, call.message.message_id)
-            try: bot.send_message(target_user_id, f"🎉 Đơn nạp tiền #{request_id} thành công! Tài khoản của bạn được cộng **+{int(amount):,}đ**.")
-            except Exception: pass
-        elif action == "reject":
-            cursor.execute("UPDATE deposit_requests SET status = 'rejected' WHERE id = ?", (request_id,))
-            conn.commit()
-            conn.close()
-            bot.edit_message_text(f"❌ Đã huỷ và từ chối duyệt đơn số #`{request_id}`.", call.message.chat.id, call.message.message_id)
-            try: bot.send_message(target_user_id, f"❌ Yêu cầu nạp đơn số **#{request_id}** đã bị Admin từ chối phê duyệt.")
-            except Exception: pass
-
-    elif data == "panel_view_pending":
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, username, amount FROM deposit_requests WHERE status = 'pending' ORDER BY id DESC LIMIT 5")
-        rows = cursor.fetchall()
-        conn.close()
-        if not rows:
-            bot.answer_callback_query(call.id, "🎉 Không có đơn nạp nào đang chờ duyệt!", show_alert=True)
+        # 20 phút = 1200 giây
+        if int(time.time()) - created_time > 1200:
+            await query.edit_message_text("❌ **ĐƠN QUÁ HẠN:** Yêu cầu nạp tiền này đã quá hạn 20 phút. Hệ thống đã tự động từ chối lệnh duyệt này!")
+            try:
+                await context.bot.send_message(chat_id=uid, text="⚠️ **THÔNG BÁO QUÁ HẠN:** Yêu cầu nạp tiền của bạn đã bị hủy do Admin không duyệt trong vòng 20 phút. Vui lòng tạo lại đơn nạp mới.")
+            except Exception:
+                pass
             return
-        text = "📥 **DANH SÁCH ĐƠN CHỜ DUYỆT CẬP NHẬT:**\n\n"
-        markup = tele.types.InlineKeyboardMarkup(row_width=2)
-        for row in rows:
-            text += f"🔹 Đơn `#{row['id']}` - Khách: @{row['username']} - **{int(row['amount']):,}đ**\n"
-            markup.add(tele.types.InlineKeyboardButton(f"✅ Duyệt #{row['id']}", callback_data=f"adm_pub_approve_{row['id']}"), tele.types.InlineKeyboardButton(f"❌ Huỷ #{row['id']}", callback_data=f"adm_pub_reject_{row['id']}"))
-        markup.add(tele.types.InlineKeyboardButton("⬅️ Quay lại", callback_data="panel_main"))
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
+            
+        # Nếu hợp lệ trong 20 phút -> Tiến hành cộng tiền
+        cursor.execute("INSERT OR IGNORE INTO users (user_id, balance) VALUES (?, 0)", (uid,))
+        cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id=?", (amt, uid))
+        conn.commit()
+        
+        await query.edit_message_text(f"✅ Đã duyệt cộng thành công {amt:,}đ cho thành viên có ID: `{uid}`", parse_mode='Markdown')
+        try:
+            await context.bot.send_message(chat_id=uid, text=f"🎉 **THÔNG BÁO NẠP TIỀN**\nTài khoản của bạn đã được cộng thành công **{amt:,}đ** từ Admin!")
+        except Exception:
+            pass
 
-    elif data == "panel_guide_acc":
-        guide_text = "➕ **CÁCH THÊM ACC HÀNG LOẠT**\n\nSếp gửi tin nhắn định dạng văn bản thường như sau:\n`/addacc`\n`taikhoan1|matkhau1`\n`taikhoan2|matkhau2`"
-        bot.edit_message_text(guide_text, call.message.chat.id, call.message.message_id, reply_markup=tele.types.InlineKeyboardMarkup().add(tele.types.InlineKeyboardButton("⬅️ Quay lại", callback_data="panel_main")), parse_mode="Markdown")
+    # 8. Admin bấm nút Từ Chối / Hủy Đơn của khách
+    elif data.startswith('deny_'):
+        if user_id != ADMIN_ID:
+            return
+        uid = int(data.split('_')[1])
+        
+        await query.edit_message_text(f"❌ Bạn đã chủ động từ chối yêu cầu nạp tiền của thành viên: `{uid}`", parse_mode='Markdown')
+        try:
+            await context.bot.send_message(chat_id=uid, text="⚠️ **THÔNG BÁO HỦY ĐƠN**\nYêu cầu nạp tiền của bạn đã bị từ chối bởi Admin. Vui lòng liên hệ hỗ trợ nếu có sai sót.")
+        except Exception:
+            pass
 
-    elif data == "panel_guide_qr":
-        guide_text = "⚙️ **CÁCH ĐỔI ẢNH QR MỚI**\n\nSếp đính kèm tệp ảnh mã ngân hàng mới của sếp rồi gửi thẳng vào đây, kèm theo ở phần mô tả nội dung caption chữ: `/addqr`. Hệ thống sẽ tự động đồng bộ ảnh gốc!"
-        bot.edit_message_text(guide_text, call.message.chat.id, call.message.message_id, reply_markup=tele.types.InlineKeyboardMarkup().add(tele.types.InlineKeyboardButton("⬅️ Quay lại", callback_data="panel_main")), parse_mode="Markdown")
+# --- LỆNH QUẢN TRỊ ADMIN (ẨN HOÀN TOÀN VỚI NGƯỜI THƯỜNG) ---
 
-    elif data == "panel_main":
-        markup = tele.types.InlineKeyboardMarkup(row_width=1)
-        markup.add(tele.types.InlineKeyboardButton("📥 Xem đơn nạp chờ duyệt", callback_data="panel_view_pending"), tele.types.InlineKeyboardButton("➕ Cách thêm Acc hàng loạt", callback_data="panel_guide_acc"), tele.types.InlineKeyboardButton("⚙️ Cách đổi cấu hình QR Bank", callback_data="panel_guide_qr"))
-        bot.edit_message_text("⚙️ **TRUNG TÂM ĐIỀU HÀNH ADMIN SHOP**", call.message.chat.id, call.message.message_id, reply_markup=markup, parse_mode="Markdown")
-
-
-# =====================================================================
-# 7. LỆNH VĂN BẢN (COMMANDS) DÀNH CHO ADMIN
-# =====================================================================
-@bot.message_handler(commands=['admin_panel'])
-def admin_panel_cmd(message):
-    if message.from_user.id != ADMIN_ID: return
-    markup = tele.types.InlineKeyboardMarkup(row_width=1)
-    markup.add(tele.types.InlineKeyboardButton("📥 Xem đơn nạp chờ duyệt", callback_data="panel_view_pending"), tele.types.InlineKeyboardButton("➕ Cách thêm Acc hàng loạt", callback_data="panel_guide_acc"), tele.types.InlineKeyboardButton("⚙️ Cách đổi cấu hình QR Bank", callback_data="panel_guide_qr"))
-    bot.reply_to(message, "⚙️ **TRUNG TÂM ĐIỀU HÀNH ADMIN SHOP**", reply_markup=markup, parse_mode="Markdown")
-
-@bot.message_handler(commands=['addacc'])
-def addacc_cmd(message):
-    if message.from_user.id != ADMIN_ID: return
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2: return
-    lines = args[1].strip().split('\n')
-    added_count = 0
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    for line in lines:
-        acc_info = line.strip()
-        if acc_info:
-            cursor.execute("INSERT INTO stock_rd (account_info) VALUES (?)", (acc_info,))
-            added_count += 1
+# Thêm tài khoản: /addacc thien2k6thicau|thienngonzai2k6
+async def add_acc(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return 
+        
+    acc_data = " ".join(context.args)
+    if not acc_data:
+        await update.message.reply_text("⚠️ Cú pháp: `/addacc tài_khoản\|mật_khẩu`", parse_mode='Markdown')
+        return
+        
+    cursor.execute("INSERT INTO accounts (data) VALUES (?)", (acc_data,))
     conn.commit()
-    conn.close()
-    bot.reply_to(message, f"✅ Đã nạp thành công **{added_count}** tài khoản mới vào kho hàng.")
+    
+    cursor.execute("SELECT COUNT(*) FROM accounts")
+    total = cursor.fetchone()[0]
+    await update.message.reply_text(f"✅ Đã thêm tài khoản thành công vào kho SQLite.\n📦 Số lượng acc hiện tại: **{total}**", parse_mode='Markdown')
 
+# Thêm hoặc Đổi ảnh QR nạp tiền: Gửi ảnh kèm dòng mô tả (caption) ghi chữ /addqr
+async def add_qr(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+        
+    if update.message.photo:
+        file_id = update.message.photo[-1].file_id
+        cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('qr_file_id', ?)", (file_id,))
+        conn.commit()
+        await update.message.reply_text("✅ Đã cập nhật ảnh mã QR mới thành công vào Database!")
+    else:
+        await update.message.reply_text("⚠️ Vui lòng gửi một bức ảnh và điền chữ `/addqr` vào nội dung mô tả (caption) của bức ảnh đó.")
 
-# =====================================================================
-# 8. KHỞI CHẠY ĐỘNG CƠ POLLING
-# =====================================================================
+# --- KHỞI CHẠY BOT ---
 if __name__ == '__main__':
-    logger.info("Bot đang kết nối với máy chủ Render...")
-    try: bot.delete_webhook(drop_pending_updates=True)
-    except Exception: pass
-    bot.infinity_polling(timeout=20, long_polling_timeout=10)
+    app = ApplicationBuilder().token(TOKEN).build()
+    
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("addacc", add_acc))
+    
+    # Bắt riêng trường hợp Admin gửi ảnh kèm chữ /addqr trong caption mô tả ảnh
+    app.add_handler(MessageHandler(filters.PHOTO & filters.CaptionRegex('^/addqr'), add_qr))
+    
+    app.add_handler(CallbackQueryHandler(button_handler))
+    
+    print("--- Hệ thống Bot Shop Liên Quân hoạt động bảo mật 24/24 ---")
+    app.run_polling()
