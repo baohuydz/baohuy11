@@ -29,12 +29,12 @@ conn.commit()
 # --- GIAO DIỆN MENU CHÍNH ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    WAITING_FOR_AMOUNT.pop(user_id, None) # Hủy trạng thái chờ nhập tiền nếu có
+    WAITING_FOR_AMOUNT.pop(user_id, None) 
     
     keyboard = [
         [InlineKeyboardButton("💳 Nạp tiền", callback_data='menu_nap')],
         [InlineKeyboardButton("💰 Số dư", callback_data='balance')],
-        [InlineKeyboardButton("🛒 Mua Acc (500đ)", callback_data='buy')],
+        [InlineKeyboardButton("🛒 Mua Acc (500đ)", callback_data='buy')], # Đã sửa thành 500đ
         [InlineKeyboardButton("📦 Kho hàng", callback_data='stock')],
         [InlineKeyboardButton("🎧 Admin hỗ trợ", url=SUPPORT_URL)]
     ]
@@ -52,7 +52,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     data = query.data
     
-    # 1. Menu nạp tiền (Thêm nút nạp tùy chỉnh)
+    # 1. Menu nạp tiền
     if data == 'menu_nap':
         cursor.execute("SELECT value FROM settings WHERE key='qr_file_id'")
         row = cursor.fetchone()
@@ -107,7 +107,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await query.edit_message_text(msg, parse_mode='Markdown')
 
-    # ... [CÁC NÚT BẤM KHÁC GIỮ NGUYÊN] ...
+    # [XEM SỐ DƯ]
     elif data == 'balance':
         cursor.execute("SELECT balance FROM users WHERE user_id=?", (user_id,))
         row = cursor.fetchone()
@@ -115,13 +115,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [[InlineKeyboardButton("« Quay lại", callback_data='back_start')]]
         await query.edit_message_text(f"💰 Số dư: **{bal:,}đ**", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
+    # [MUA TÀI KHOẢN - CẬP NHẬT GIÁ 500Đ & FIX LỖI CRASH]
     elif data == 'buy':
-        price = 500  
+        price = 500  # Đã giảm giá xuống còn 500đ
+        
         cursor.execute("SELECT balance FROM users WHERE user_id=?", (user_id,))
-        bal = cursor.fetchone()[0] if cursor.execute("SELECT balance FROM users WHERE user_id=?", (user_id,)).fetchone() else 0
+        row_user = cursor.fetchone()
+        bal = row_user[0] if row_user else 0
         
         cursor.execute("SELECT id, data FROM accounts ORDER BY id ASC LIMIT 1")
         row_acc = cursor.fetchone()
+        
         keyboard = [[InlineKeyboardButton("« Quay lại", callback_data='back_start')]]
         
         if bal < price:
@@ -131,16 +135,20 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             acc_id, acc_data = row_acc
             new_bal = bal - price
+            
             cursor.execute("UPDATE users SET balance=? WHERE user_id=?", (new_bal, user_id))
             cursor.execute("DELETE FROM accounts WHERE id=?", (acc_id,))
             conn.commit()
+            
             await query.edit_message_text(f"🎉 **MUA THÀNH CÔNG!**\n\nTài khoản của bạn:\n`{acc_data}`\n\n_Số dư còn lại: {new_bal:,}đ_", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
+    # [XEM TỒN KHO]
     elif data == 'stock':
         count = cursor.execute("SELECT COUNT(*) FROM accounts").fetchone()[0]
         keyboard = [[InlineKeyboardButton("« Quay lại", callback_data='back_start')]]
         await query.edit_message_text(f"📦 Trong kho còn: **{count}** acc.", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
+    # [QUAY LẠI MENU GỐC]
     elif data == 'back_start':
         if query.message.photo:
             await query.message.delete()
@@ -180,11 +188,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text.strip()
     
-    # Nếu người dùng đang ở trạng thái chờ nhập số tiền
     if WAITING_FOR_AMOUNT.get(user_id):
+        # Thiết lập số tiền nạp tối thiểu tùy ý (hiện tại mình để 1000đ)
         if text.isdigit() and int(text) >= 1000:
             amount = int(text)
-            WAITING_FOR_AMOUNT[user_id] = False # Xóa trạng thái chờ
+            WAITING_FOR_AMOUNT[user_id] = False 
             current_time = int(time.time())
             
             admin_keyboard = [[
@@ -192,7 +200,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 InlineKeyboardButton("❌ Hủy", callback_data=f"deny_{user_id}")
             ]]
             
-            # Gửi yêu cầu tùy chỉnh cho Admin
             await context.bot.send_message(
                 chat_id=ADMIN_ID,
                 text=f"🔔 **YÊU CẦU NẠP TÙY CHỈNH (Hạn 20 phút)**\n- Khách: `{user_id}`\n- Số tiền: {amount:,}đ",
@@ -215,27 +222,23 @@ async def add_acc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total = cursor.execute("SELECT COUNT(*) FROM accounts").fetchone()[0]
     await update.message.reply_text(f"✅ Đã thêm acc.\n📦 Tổng kho: **{total}**", parse_mode='Markdown')
 
-# BƯỚC 1: Admin gõ lệnh /addqr
 async def cmd_addqr(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
     WAITING_FOR_QR[ADMIN_ID] = True
     await update.message.reply_text("📸 Hãy gửi ảnh mã QR thanh toán của bạn lên đây (chỉ cần gửi ảnh, không cần gõ thêm chữ).")
 
-# BƯỚC 2: Admin gửi ảnh lên
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    
     if user_id == ADMIN_ID:
-        # Kiểm tra xem có đang ở trạng thái chờ nhận ảnh QR không (Hoặc gửi ảnh kèm caption cũ vẫn nhận)
         is_waiting = WAITING_FOR_QR.get(user_id, False)
         is_caption = update.message.caption and update.message.caption.strip().startswith('/addqr')
         
         if is_waiting or is_caption:
-            file_id = update.message.photo[-1].file_id # Lấy ảnh chất lượng cao nhất
+            file_id = update.message.photo[-1].file_id 
             cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('qr_file_id', ?)", (file_id,))
             conn.commit()
             
-            WAITING_FOR_QR[user_id] = False # Xóa trạng thái
+            WAITING_FOR_QR[user_id] = False 
             await update.message.reply_text("✅ Đã lưu ảnh mã QR mới thành công vào hệ thống!")
 
 # --- KHỞI CHẠY BOT BẤT ĐỒNG BỘ ---
@@ -244,16 +247,16 @@ async def main():
     
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("addacc", add_acc))
-    app.add_handler(CommandHandler("addqr", cmd_addqr)) # Bắt lệnh /addqr
-    app.add_handler(MessageHandler(filters.PHOTO, handle_photo)) # Bắt sự kiện gửi ảnh
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text)) # Bắt tin nhắn chữ (số tiền)
+    app.add_handler(CommandHandler("addqr", cmd_addqr)) 
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photo)) 
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text)) 
     app.add_handler(CallbackQueryHandler(button_handler))
     
     await app.initialize()
     await app.updater.start_polling(allowed_updates=["message", "callback_query"])
     await app.start()
     
-    print("--- 🚀 Bot Shop đang chạy (Có Nạp tùy chỉnh & Add QR thông minh) ---")
+    print("--- 🚀 Bot Shop đang chạy (Giá bán: 500đ) ---")
     try:
         while True: await asyncio.sleep(3600)
     except (KeyboardInterrupt, SystemExit):
