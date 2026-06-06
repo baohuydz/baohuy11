@@ -34,7 +34,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("💳 Nạp tiền", callback_data='menu_nap')],
         [InlineKeyboardButton("💰 Số dư", callback_data='balance')],
-        [InlineKeyboardButton("🛒 Mua Acc (1,000đ)", callback_data='buy')],
+        [InlineKeyboardButton("🛒 Mua Acc (500đ)", callback_data='buy')],
         [InlineKeyboardButton("📦 Kho hàng", callback_data='stock')],
         [InlineKeyboardButton("🎧 Admin hỗ trợ", url=SUPPORT_URL)]
     ]
@@ -116,7 +116,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(f"💰 Số dư: **{bal:,}đ**", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
 
     elif data == 'buy':
-        price = 1000  
+        price = 500  
         cursor.execute("SELECT balance FROM users WHERE user_id=?", (user_id,))
         bal = cursor.fetchone()[0] if cursor.execute("SELECT balance FROM users WHERE user_id=?", (user_id,)).fetchone() else 0
         
